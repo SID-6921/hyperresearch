@@ -10,10 +10,10 @@ Each note is embedded from title + summary + the first `body_chars` of body.
 Vectors are float32 BLOBs in the `embeddings` table; query time is a brute-
 force scan, but `semantic_search` compares the query against every stored
 vector in one numpy matmul rather than one Python `cosine()` call per note.
-That keeps the scan cheap into the hundreds of thousands of notes — no
-vector-DB dependency needed at the sizes this tool produces (~300 sources
-per run). No dependency cost either: numpy already ships transitively via
-Crawl4AI.
+Measured sub-second up to ~50k notes (the scan itself is well under that
+at 1536-dim); larger vaults are untested. No vector-DB dependency needed at
+the sizes this tool produces (~300 sources per run). numpy is a declared
+dependency, and Crawl4AI already requires it.
 
 All HTTP goes through `_http_embed`, monkeypatched in tests — the suite never
 calls a paid API.
@@ -209,7 +209,7 @@ def semantic_search(
 
     if blobs:
         mat = np.frombuffer(b"".join(blobs), dtype="<f4").reshape(len(blobs), -1)
-        denom = np.linalg.norm(mat, axis=1) * np.linalg.norm(q)
+        denom = np.sqrt(np.einsum("ij,ij->i", mat, mat)) * np.sqrt(q @ q)
         scores = np.divide(
             mat @ q, denom, out=np.zeros(len(blobs), dtype=np.float32), where=denom != 0
         )

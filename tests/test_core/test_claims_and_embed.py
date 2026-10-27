@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+import warnings
 
 import pytest
 
@@ -304,6 +306,49 @@ class TestEmbeddings:
         assert len(hits) == 4
         mismatched = next(h for h in hits if h["id"] == note_id)
         assert mismatched["score"] == 0.0
+
+    def test_semantic_search_zero_vectors_score_zero(self, seeded_vault, monkeypatch):
+        """The `where=denom != 0` branch: a stored all-zero vector, or an
+        all-zero query, has no direction. It must score 0.0 with no NaN and
+        no RuntimeWarning, and leave the other notes' scores unchanged."""
+        vault = self._openai_vault(seeded_vault, monkeypatch)
+        query = "concurrency patterns"
+        cfg = vault.config.embeddings
+        model = cfg.model or embed.DEFAULT_MODELS[cfg.provider]
+        [query_vec] = embed._http_embed(cfg.provider, model, [query])
+
+        zero_id = vault.db.execute(
+            "SELECT note_id FROM embeddings LIMIT 1"
+        ).fetchone()["note_id"]
+        vault.db.execute(
+            "UPDATE embeddings SET vector = ? WHERE note_id = ?",
+            (embed._pack([0.0, 0.0, 0.0]), zero_id),
+        )
+        vault.db.commit()
+        expected = {
+            row["note_id"]: cosine(query_vec, embed._unpack(row["vector"]))
+            for row in vault.db.execute("SELECT note_id, vector FROM embeddings").fetchall()
+        }
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            hits = embed.semantic_search(vault, query, limit=10)
+        assert len(hits) == len(expected)
+        assert all(not math.isnan(h["score"]) for h in hits)
+        # The fake embedder's vectors are non-negative, so every other note
+        # scores > 0 and the zero vector sorts last.
+        assert hits[-1] == {"id": zero_id, "score": 0.0}
+        assert all(h["score"] > 0 for h in hits[:-1])
+        for h in hits:
+            assert h["score"] == pytest.approx(expected[h["id"]], abs=1e-5)
+
+        # Zero query: every note scores 0.0, still no NaN or warning.
+        monkeypatch.setattr(embed, "_http_embed", lambda p, m, texts: [[0.0, 0.0, 0.0]])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            hits = embed.semantic_search(vault, query, limit=10)
+        assert len(hits) == len(expected)
+        assert all(h["score"] == 0.0 for h in hits)
 
 
 class TestClaimsIngestHostileInput:
