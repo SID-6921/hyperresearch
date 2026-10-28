@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- **The Codex Stop hook stays in the project.** A vault at the home directory (where `install` or the first-run bootstrap was run from `~`) made `<root>/.codex/hooks.json` Codex's user-level hooks file, so the stop gate ran in every Codex session. It finds a vault by walking up from the session's directory, so a home-vault run that was mid-pipeline would force-continue unrelated sessions anywhere under `~`. The hook is now skipped, with a "NOT installed" note, whenever the project's `.codex/` is `$CODEX_HOME` (default `~/.codex`). Separately, the first-run bootstrap inside a Codex session crashed with `OSError: Read-only file system`, after writing the step files, because the workspace-write sandbox keeps `.codex/` read-only. It now reports the hook as NOT installed together with the command to run outside the sandbox, and the entry skill tells the orchestrator to re-run that command once with escalated permissions.
+
 ### Fixed
 
 - **Cite-check no longer auto-passes a citation because one number matches (#150, from @jackiectl2).** The mechanical triage passed a sentence when every number in it appeared anywhere in the cited note's claims, so "Another team improves throughput by 10x" or "Async employs 10 engineers" passed on a claim about async's 10x throughput gain. A sentence with a figure of 2+ digits now passes only when it matches one of the cited note's claims or quotes in full; anything else goes to the cite-checker agent. Single-digit tokens ("Step 1", the "4" in "GPT-4") are still labels rather than figures, so those sentences keep passing on a long shared run of words. The step 14.5 skill and the cite-checker prompt describe the new rule.
